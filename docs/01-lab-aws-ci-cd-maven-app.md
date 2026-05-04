@@ -116,3 +116,59 @@ Luồng deploy:
      3. CodeDeploy shift traffic từ TG Blue sang TG Green theo strategy:
           - all‑at‑once / canary / linear.
      4. Nếu lỗi (CloudWatch Alarm) → rollback traffic về Blue.
+
+---
+
+## 4. Chuẩn bị mã nguồn
+
+### 4.1. Cấu trúc repo
+```text
+.
+├── src/...
+├── pom.xml
+├── Dockerfile
+├── buildspec.yml
+├── appspec.yaml
+└── taskdef.json
+
+```
+
+### 4.2. pom.xml (phần build đã chỉnh finalName)
+
+Thêm <finalName> để jar luôn là shopping-cart.jar:
+```text
+<build>
+    <finalName>shopping-cart</finalName>
+
+    <plugins>
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+        </plugin>
+
+        <plugin>
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
+            <version>${jacoco.version}</version>
+            <executions>
+                <execution>
+                    <id>jacoco-initialize</id>
+                    <goals>
+                        <goal>prepare-agent</goal>
+                    </goals>
+                </execution>
+                <execution>
+                    <id>jacoco-site</id>
+                    <phase>package</phase>
+                    <goals>
+                        <goal>report</goal>
+                    </goals>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
+
+```
+(Nếu không còn dùng Nexus on‑prem, có thể xóa block <distributionManagement>.)
+
