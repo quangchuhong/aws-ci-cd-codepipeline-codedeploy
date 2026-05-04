@@ -80,3 +80,39 @@
                                        │  Blue/Green + ALB + TGs    │
                                        └────────────────────────────┘
 ```
+
+
+### 3.2. Chi tiết luồng Blue‑Green trên ECS
+```text
+                   ┌───────────────────────────── ALB ─────────────────────────────┐
+                   │                                                               │
+           Users   │                             Listener 80                       │
+   ───────────────▶│                           (HTTP/HTTPS)                        │
+                   │                            │                  ┌────────────┐  │
+                   │                            │                  │  TG Blue   │  │
+                   │                            │                  │ (current)  │  │
+                   │                            └─────────────┬────┴────────────┘  │
+                   │                                          │                   │
+                   │                                          │                   │
+                   │                                    ┌──────┴──────┐           │
+                   │                                    │   TG Green  │           │
+                   │                                    │ (new ver)   │           │
+                   │                                    └──────┬──────┘           │
+                   └───────────────────────────────────────────┼──────────────────┘
+                                                               │
+                                ┌──────────────────────────────┴──────────────────────────┐
+                                │                    ECS Service                          │
+                                │    - Blue task set (old image)                         │
+                                │    - Green task set (new image)                        │
+                                │    - CodeDeploy điều khiển traffic giữa 2 task set     │
+                                └─────────────────────────────────────────────────────────┘
+
+```
+
+Luồng deploy:
+
+     1. CodeDeploy tạo Green task set với Docker image mới.
+     2. Health check Green OK (qua TG Green).
+     3. CodeDeploy shift traffic từ TG Blue sang TG Green theo strategy:
+          - all‑at‑once / canary / linear.
+     4. Nếu lỗi (CloudWatch Alarm) → rollback traffic về Blue.
