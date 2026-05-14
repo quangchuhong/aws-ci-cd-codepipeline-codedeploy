@@ -194,3 +194,37 @@ CodeDeploy là **dịch vụ deploy orchestrator**:
           LoadBalancerInfo:
             ContainerName: app
             ContainerPort: 80
+  ```
+
+- **CodeDeploy:**
+  - Tạo TaskDef mới (image mới từ imagedefinitions.json).
+  - Tạo Green task set.
+  - Health check Green.
+  - Chia traffic Blue↔Green (AllAtOnce/Canary/Linear).
+  - Rollback nếu Alarm/health fail.
+
+- **Lambda (canary/linear):**
+
+  - Tích hợp với Lambda version + alias:
+    - Blue = alias trỏ version cũ,
+    - Green = version mới.
+  - CodeDeploy điều chỉnh traffic alias:
+    - Canary: 10% → đợi → 100%.
+    - Linear: 10% → 20% → 30%… → 100%.
+  - Theo dõi Alarm và rollback alias nếu lỗi.
+
+
+### 4.3. Vai trò trong CI/CD
+
+Trong pipeline:
+
+  - Deploy stage = CodeDeploy:
+    - Deploy EC2 app (script-based).
+    - Rollout ECS Blue‑Green.
+    - Rollout Lambda canary/linear.
+      
+Thường được dùng kết hợp với CodePipeline & CodeBuild:
+
+  - CodeBuild build/test/scan, tạo artifact (zip/image + AppSpec + TaskDef/Imagedef).
+  - CodePipeline gửi artifact vào CodeDeploy.
+  - CodeDeploy lo phần rollout + rollback.
