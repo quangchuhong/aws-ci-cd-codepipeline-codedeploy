@@ -229,6 +229,8 @@ Thường được dùng kết hợp với CodePipeline & CodeBuild:
   - CodePipeline gửi artifact vào CodeDeploy.
   - CodeDeploy lo phần rollout + rollback.
 
+---
+
 
 # 5. Kịch bản CI/CD điển hình với CodeCommit, CodeBuild, CodePipeline, CodeDeploy
 
