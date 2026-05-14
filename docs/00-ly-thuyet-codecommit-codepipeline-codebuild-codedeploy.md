@@ -228,3 +228,187 @@ Thường được dùng kết hợp với CodePipeline & CodeBuild:
   - CodeBuild build/test/scan, tạo artifact (zip/image + AppSpec + TaskDef/Imagedef).
   - CodePipeline gửi artifact vào CodeDeploy.
   - CodeDeploy lo phần rollout + rollback.
+
+
+# 5. Kịch bản CI/CD điển hình với CodeCommit, CodeBuild, CodePipeline, CodeDeploy
+
+Phần này mô tả một số kịch bản CI/CD phổ biến sử dụng kết hợp 4 dịch vụ:
+
+- **CodeCommit** (source)
+- **CodeBuild** (build/test/scan)
+- **CodePipeline** (orchestrator)
+- **CodeDeploy** (deploy/rollout/rollback)
+
+---
+
+## 5.1. CI/CD cho ECS Fargate (Blue‑Green)
+
+### Mục tiêu
+
+- Chạy ứng dụng container (Microservice / API) trên ECS Fargate.
+- Triển khai **Blue‑Green** với rollback an toàn.
+- Tự động build, test, scan, build image và rollout.
+
+### Luồng
+
+1. **Source (CodeCommit)**  
+   - Dev push code vào repo (ví dụ `shopping-cart-app`).
+   - EventBridge nhận event push → trigger CodePipeline.
+
+2. **Build (CodeBuild)**  
+   CodeBuild chạy `buildspec.yml` để:
+   - Build & test:
+     - `mvn test` / `npm test` / `go test`…
+   - Scan source:
+     - Dependency scan (OWASP Dependency‑Check),
+     - SonarQube/SonarCloud (nếu có).
+   - Build & scan image:
+     - `docker build` → build image từ Dockerfile,
+     - Scan image với Trivy/Grype,
+     - Push image lên **ECR** (`<account>.dkr.ecr.../repo:tag`).
+   - Chuẩn bị artifact cho deploy:
+     - `taskdef.json` (Task Definition ECS),
+     - `appspec.yaml` (mô tả ECS Service + ALB),
+     - `imagedefinitions.json` (chỉ ra image mới).
+
+3. **Deploy (CodeDeploy – ECS Blue‑Green)**  
+   CodePipeline gửi artifact vào CodeDeploy (ECS app + deployment group):
+
+   - CodeDeploy:
+     - Tạo Task Definition revision mới với image từ `imagedefinitions.json`.
+     - Dựng **Green task set** cho ECS service.
+     - Gắn Green vào **TG‑Green** trên ALB.
+     - Health check Green (qua path `/health` hoặc `/`).
+   - Nếu Green OK:
+     - CodeDeploy chuyển traffic từ **TG‑Blue** sang **TG‑Green**:
+       - AllAtOnce / Canary / Linear.
+   - Nếu health/Alarm fail:
+     - CodeDeploy rollback:
+       - Traffic quay lại TG‑Blue,
+       - Deployment đánh dấu FAILED.
+
+4. **Kết quả**
+
+- Người dùng hầu như không downtime.
+- Có log/monitor cho từng deployment, dễ rollback.
+- CodeCommit + CodeBuild + CodePipeline + CodeDeploy tạo thành chuỗi CI/CD hoàn chỉnh cho ECS Fargate.
+
+---
+
+## 5.2. CI/CD cho Lambda (Serverless Canary/Linear)
+
+### Mục tiêu
+
+- Deploy Lambda function version mới an toàn.
+- Rollout theo canary/linear và rollback tự động nếu lỗi.
+
+### Luồng
+
+1. **Source (CodeCommit)**  
+   - Dev push code (Node.js/Python/Java) vào repo Lambda (SAM/CDK hoặc zip thuần).
+
+2. **Build (CodeBuild)**  
+   - Chạy test/unit test.
+   - Build package:
+     - `sam build` / `mvn package` / `zip` code.
+   - Triển khai version mới (tạo Lambda version):
+     - `sam deploy` / `aws lambda update-function-code` + `publish-version`.
+   - Chuẩn bị revision cho CodeDeploy (Lambda):
+     - AppSpec + thông tin function + alias.
+
+3. **Deploy (CodeDeploy – Lambda)**  
+
+   CodeDeploy nhận version mới + alias (vd `prod`):
+
+   - Rollout traffic:
+     - **Canary**: 10% traffic → đợi X phút → 100%.
+     - **Linear**: tăng dần 10% mỗi Y phút.
+   - Theo dõi CloudWatch Alarm:
+     - Nếu error rate/throttles/latency… vượt ngưỡng:
+       - Mark deployment FAILED,
+       - **Rollback alias** về version cũ (Blue).
+
+4. **Kết quả**
+
+- Rollout Lambda version mới không cần downtime.
+- Có thể làm A/B, canary dễ dàng.
+- Rollback chỉ là đổi alias, rất nhanh.
+
+---
+
+## 5.3. CI + GitOps CD (ArgoCD/Flux + ECS/EKS)
+
+### Mục tiêu
+
+- CI trên AWS (build/test/scan/image).
+- CD thông qua GitOps (ArgoCD/Flux), không deploy trực tiếp từ CodePipeline.
+
+### Luồng
+
+1. **Source (CodeCommit – App repo)**  
+   - Dev push code vào repo app (Java/Node/Go…).
+   - EventBridge → CodePipeline CI trigger.
+
+2. **Build (CodeBuild)**  
+
+   CodeBuild:
+
+   - Build & test:
+     - `mvn test`, `npm test`,…
+   - Build & scan image:
+     - `docker build` + Trivy,
+     - Push ECR (tag SHA commit).
+   - **Update GitOps repo**:
+     - Clone GitOps repo (CodeCommit/GitHub) → `gitops/`.
+     - Sửa manifest/values.yaml:
+       - Cập nhật:
+         - `image.repository = <ECR_URI>`,
+         - `image.tag = <IMAGE_TAG>`.
+     - Commit & push.
+
+3. **CD (ArgoCD/Flux)**  
+
+   - ArgoCD Application trỏ vào GitOps repo:
+     - Ví dụ: `path: overlays/prod`, branch `main`.
+   - Khi GitOps repo thay đổi:
+     - ArgoCD detect diff,
+     - Apply manifest mới → update deployment trên ECS/EKS.
+
+4. **Kết quả**
+
+- CodeCommit/CodeBuild/CodePipeline = **CI + Build + Update GitOps**.
+- ArgoCD/Flux = **CD**, tự sync cluster với trạng thái trong Git.
+- Tách biệt rõ:
+  - Source code repo vs GitOps repo,
+  - CI vs CD, dễ audit & rollback theo commit GitOps.
+
+---
+
+### 5.4. CI/CD cho EC2/On‑Prem (Script Deploy)
+
+### Mục tiêu
+
+- Deploy app (Java/Node/.NET) lên EC2/on‑prem VM bằng script.
+- Dùng CodeDeploy để control rollout/rollback trên nhiều instance.
+
+### Luồng
+
+1. **Source (CodeCommit)**  
+   - Chứa source app + `appspec.yml` + `scripts/*.sh`.
+2. **Build (CodeBuild)**  
+   - Build package (jar/war/zip).
+   - Upload bundle (zip) lên S3.
+3. **Deploy (CodeDeploy – EC2/On‑Prem)**  
+   CodeDeploy agent trên mỗi instance:
+   - Nhận revision (từ S3),
+   - Thực hiện các hook trong `appspec.yml`:
+     - `BeforeInstall` (dừng service cũ, backup),
+     - `Install` (copy file),
+     - `AfterInstall` (migrate DB),
+     - `ApplicationStart` (start service),
+     - `ValidateService` (health check).
+   - Rollout theo batch (rolling) hoặc blue‑green (ASG + ELB).
+4. **Kết quả**
+
+- Triển khai đồng nhất nhiều EC2/VM với script chuẩn.
+- Có khả năng rollback nếu hook fail.
