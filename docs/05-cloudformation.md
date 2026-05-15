@@ -267,3 +267,196 @@ Cho phép template linh hoạt, tái sử dụng, ít hard-code.
 - **Kết hợp SSM/Secrets** cho config & secret nhạy cảm.
 
 CloudFormation là nền tảng IaC gốc của AWS; các công cụ cao hơn như **SAM** và **CDK** thực chất đều sinh/triển khai qua CloudFormation, nên nắm được các option trên giúp hiểu và vận hành tốt bất kỳ stack AWS nào.
+
+---
+
+## 8. Ví dụ template CloudFormation: EC2 + ALB + SG + RDS
+
+Ví dụ dưới đây minh họa cách sử dụng các option cơ bản (Parameters, Resources, Outputs) để triển khai:
+
+- 1 EC2 instance (web server)
+- 1 ALB (Application Load Balancer)
+- Security Group cho ALB, EC2, RDS
+- 1 RDS MySQL instance (demo, không phải cấu hình production)
+
+Giả định:
+
+- Đã có sẵn VPC + Subnet (truyền vào qua Parameters).
+- Dùng **YAML**.
+- Password DB được truyền qua CLI / file JSON (không hard-code trong template).
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Example - EC2 + ALB + Security Groups + RDS
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet::Id
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet::Id
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet::Id
+
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI dùng cho EC2 web server
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+  DbName:
+    Type: String
+    Default: appdb
+
+  DbUser:
+    Type: String
+    Default: appuser
+
+  DbPassword:
+    NoEcho: true
+    Type: String
+    Description: Mật khẩu DB (truyền qua Parameters / SSM, không hard-code)
+
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+
+  DbInstanceClass:
+    Type: String
+    Default: db.t3.micro
+
+Resources:
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG cho ALB (HTTP từ internet)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  Ec2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG cho EC2 (chỉ cho phép từ ALB)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG cho RDS (chỉ cho phép từ EC2)
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref Ec2SecurityGroup
+
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroupIds:
+        - !Ref Ec2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: app-web-ec2
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo "Hello from EC2 behind ALB" > /var/www/html/index.html
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      Targets:
+        - Id: !Ref AppInstance
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+
+  AppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "app-alb-${AWS::Region}"
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+
+  AppListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AppLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  AppDbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group cho RDS
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+  AppDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref DbName
+      Engine: mysql
+      MasterUsername: !Ref DbUser
+      MasterUserPassword: !Ref DbPassword
+      AllocatedStorage: !Ref DbAllocatedStorage
+      DBInstanceClass: !Ref DbInstanceClass
+      VPCSecurityGroups:
+        - !Ref DbSecurityGroup
+      DBSubnetGroupName: !Ref AppDbSubnetGroup
+      MultiAZ: false
+      PubliclyAccessible: false
+      DeletionProtection: false
+
+Outputs:
+  AlbDnsName:
+    Description: DNS name của ALB
+    Value: !GetAtt AppLoadBalancer.DNSName
+
+  Ec2InstanceId:
+    Description: ID của EC2 web server
+    Value: !Ref AppInstance
+
+  DbEndpoint:
+    Description: Endpoint truy cập RDS
+    Value: !GetAtt AppDatabase.Endpoint.Address
+```
