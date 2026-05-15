@@ -118,14 +118,15 @@ sam deploy
     - Permission,
     - API Gateway event / SQS event / DynamoDB stream event, …
   - So với CloudFormation thuần hoặc Terraform, template ngắn và dễ đọc hơn cho use case serverless.
-    
-**2. Hỗ trợ kiểm thử local ** 
+
+
+**2. Hỗ trợ kiểm thử local**
 
   - sam local invoke: chạy 1 Lambda với event JSON trên máy dev.
   - sam local start-api: giả lập API Gateway + Lambda, gọi qua HTTP như thật.
   - Có thể gắn debugger (VS Code, PyCharm, …) để debug như app bình thường.
-    
-3. **Tự động hóa build + deploy  **
+
+**3. Tự động hóa build + deploy**
 
   - Gói bundling/build cho Lambda (npm/pip, …).
   - Package artifact lên S3, generate template CloudFormation.
