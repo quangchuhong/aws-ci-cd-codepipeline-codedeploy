@@ -460,3 +460,118 @@ Outputs:
     Description: Endpoint truy cập RDS
     Value: !GetAtt AppDatabase.Endpoint.Address
 ```
+
+### 8.1. Hướng dẫn triển khai: create / update / delete stack với `params.json`
+
+Phần này minh họa cách triển khai template CloudFormation (ví dụ ở mục 8) bằng AWS CLI, tách riêng phần **giá trị tham số** trong file `params.json`.
+
+### 8.2. Chuẩn bị file tham số `params.json`
+
+Ví dụ cho template EC2 + ALB + RDS ở mục 8:
+
+```json
+[
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-xxxxxxxx"
+  },
+  {
+    "ParameterKey": "PublicSubnetA",
+    "ParameterValue": "subnet-aaaaaaa"
+  },
+  {
+    "ParameterKey": "PublicSubnetB",
+    "ParameterValue": "subnet-bbbbbbb"
+  },
+  {
+    "ParameterKey": "PrivateSubnetA",
+    "ParameterValue": "subnet-ccccccc"
+  },
+  {
+    "ParameterKey": "PrivateSubnetB",
+    "ParameterValue": "subnet-ddddddd"
+  },
+  {
+    "ParameterKey": "AmiId",
+    "ParameterValue": "ami-039a8ebebdd2a1def"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.micro"
+  },
+  {
+    "ParameterKey": "DbName",
+    "ParameterValue": "appdb"
+  },
+  {
+    "ParameterKey": "DbUser",
+    "ParameterValue": "appuser"
+  },
+  {
+    "ParameterKey": "DbPassword",
+    "ParameterValue": "YourStrongPassword123!"
+  },
+  {
+    "ParameterKey": "DbAllocatedStorage",
+    "ParameterValue": "20"
+  },
+  {
+    "ParameterKey": "DbInstanceClass",
+    "ParameterValue": "db.t3.micro"
+  }
+]
+```
+
+#### Tạo stack (create stack)
+```bash
+aws cloudformation describe-stacks \
+  --region ap-southeast-1 \
+  --stack-name app-ec2-alb-rds \
+  --query "Stacks[0].Outputs" \
+  --output table
+
+```
+
+#### Cập nhật stack (update stack)
+
+Khi cần thay đổi:
+
+  - Giá trị tham số (ví dụ đổi AMI, instance type, DB size…) → sửa trong params-dev.json.
+  - Hoặc logic template (thêm/bớt resource) → sửa app-example.yaml.
+Sau đó chạy:
+```bash
+aws cloudformation update-stack \
+  --region ap-southeast-1 \
+  --stack-name app-ec2-alb-rds \
+  --template-body file://app-example.yaml \
+  --capabilities CAPABILITY_IAM \
+  --parameters file://params-dev.json
+
+```
+
+Kiểm tra:
+
+```bash
+aws cloudformation describe-stacks \
+  --region ap-southeast-1 \
+  --stack-name app-ec2-alb-rds \
+  --query "Stacks[0].StackStatus"
+
+```
+
+#### Xóa stack (delete stack)
+```bash
+aws cloudformation delete-stack \
+  --region ap-southeast-1 \
+  --stack-name app-ec2-alb-rds
+
+```
+
+Theo dõi tiến trình:
+```bash
+aws cloudformation describe-stacks \
+  --region ap-southeast-1 \
+  --stack-name app-ec2-alb-rds \
+  --query "Stacks[0].StackStatus"
+
+```
