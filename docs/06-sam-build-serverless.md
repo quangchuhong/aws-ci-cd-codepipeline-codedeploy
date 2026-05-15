@@ -107,4 +107,23 @@ sam build
 ```
 SAM sẽ tạo thư mục .aws-sam/ chứa code đã build.
 
+### 5.2. Chạy thử local
+
+**a) Gọi trực tiếp Lambda (local invoke)**
+
+Tạo event.json (tùy chọn):
+```json
+{
+  "queryStringParameters": {
+    "name": "local"
+  }
+}
+
+```
+
+Chạy:
+```bash
+sam local invoke HelloFunction -e event.json
+
+```
 
