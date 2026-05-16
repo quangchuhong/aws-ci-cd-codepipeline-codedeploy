@@ -99,4 +99,225 @@ Dùng để **quét (scan) và cài đặt (install) bản vá OS** cho EC2 và 
   - Mỗi Patch Group gắn với **1 Patch Baseline**.
 
 - **Maintenance Window**  
-  - Khung giờ cho
+  - Khung giờ cho phép chạy patch (VD: CN 01:00–03:00).
+
+- **SSM Document**  
+  - Thường dùng: `AWS-RunPatchBaseline` (Scan/Install).
+
+### Luồng hoạt động
+
+- **Scan**:
+  - Chạy `AWS-RunPatchBaseline` với mode Scan.
+  - Thu thông tin patch thiếu → xem ở **Compliance / Patch Manager**.
+- **Install**:
+  - Chạy mode Install.
+  - Cài patch đã “Approved”; có thể reboot nếu cần.
+- Thường **kết hợp Maintenance Window**:
+  - Tạo MW → gán Run Command `AWS-RunPatchBaseline` → target patch group.
+
+---
+
+## 5. SSM Documents (Command & Automation)
+
+**SSM Document** định nghĩa **những gì SSM sẽ làm**. Có nhiều loại, ở đây tập trung:
+
+- **Command document** (dùng với Run Command, State Manager).
+- **Automation document** (runbook nhiều bước, dùng với Automation).
+
+### Thành phần cơ bản (Command document)
+
+- `schemaVersion`: version schema (thường `2.2`).
+- `description`: mô tả.
+- `parameters`: khai báo các input từ bên ngoài.
+- `mainSteps`:
+  - Các bước thực thi:
+    - `aws:runShellScript` (Linux/Unix)
+    - `aws:runPowerShellScript` (Windows)
+  - Có thể dùng `precondition` để tách Linux/Windows.
+
+### Tách Linux / Windows trong cùng document
+
+- Dùng `precondition` với `platformType`:
+  - Step Linux: `aws:runShellScript` + `StringEquals: ["platformType", "Linux"]`.
+  - Step Windows: `aws:runPowerShellScript` + `StringEquals: ["platformType", "Windows"]`.
+
+### Parameter trong document
+
+- Khai báo ở `parameters`, dùng với cú pháp `{{ ParameterName }}`.
+- Có các thuộc tính:
+  - `type` (String, StringList, Boolean, Integer,…)
+  - `default`
+  - `allowedValues`, `description`, …
+
+Khi chạy document (Run Command/State Manager), hệ thống sẽ hiển thị form để điền các parameter đó.
+
+---
+
+## 6. State Manager
+
+Dùng để **giữ máy chủ ở “trạng thái mong muốn”** bằng cách **áp SSM Document định kỳ**.
+
+### Ý nghĩa
+
+- Đảm bảo:
+  - Package/agent phải luôn được cài.
+  - Service phải luôn chạy/luôn disabled.
+  - File config phải luôn đúng template.
+- Tự động sửa lại nếu có người/ứng dụng thay đổi sai.
+
+### Khái niệm chính
+
+- **Association**:
+  - Một cấu hình State Manager cụ thể:
+    - Document (AWS/custom).
+    - Targets (theo tag / instance).
+    - Schedule (rate/cron).
+    - Parameters.
+
+### Cách dùng tóm tắt
+
+- Vào **State Manager → Create association**:
+  - Chọn document (ví dụ cài package, đảm bảo service chạy, script cấu hình…).
+  - Chọn target (theo tag `Role=WebServer`, `Env=Prod`…).
+  - Đặt schedule (VD: mỗi 15 phút, hoặc cron).
+  - Từ đó, State Manager **định kỳ chạy** document đó lên các target.
+
+---
+
+## 7. Automation (Runbook)
+
+Dùng để **xây dựng workflow nhiều bước** (runbook) cho các tác vụ vận hành phức tạp, như:
+
+- Tạo AMI backup + xóa AMI cũ.
+- Stop → snapshot → start lại instance.
+- Khắc phục sự cố (thu log, restart service, gửi thông báo).
+- Tích hợp với Change Manager để chạy change chuẩn.
+
+### Thành phần chính của Automation document
+
+- `schemaVersion`: thường `'0.3'`.
+- `description`: mô tả runbook.
+- `assumeRole`:
+  - IAM Role mà Automation **assume** để gọi API AWS.
+  - Role cần trust `ssm.amazonaws.com` + policy phù hợp (EC2, S3,…).
+- `parameters`:
+  - Input cho runbook (InstanceId, list instance, retentionDays,…).
+- `mainSteps`:
+  - Các bước workflow:
+    - `aws:executeAwsApi` – gọi API AWS trực tiếp.
+    - `aws:runCommand` – gọi Run Command.
+    - `aws:executeScript` – chạy code Python/PowerShell inline.
+    - `aws:approve` / `aws:reject` / `aws:pause` – phê duyệt, tạm dừng.
+    - Các action chuyên biệt khác (`aws:createImage`, `aws:createStack`,…).
+  - Có thể điều khiển flow:
+    - `nextStep`, `isEnd`, `onFailure`, `timeoutSeconds`…
+- `outputs`:
+  - Định nghĩa output cuối cùng của runbook (JSONPath tới step nào đó).
+
+### Cách sử dụng
+
+- Vào **Automation → Execute automation**:
+  - Chọn runbook (AWS cung cấp sẵn hoặc custom).
+  - Điền parameter.
+  - Thực thi và theo dõi từng step.
+- Có thể trigger từ:
+  - **Change Manager** (sau khi approve).
+  - **EventBridge / CloudWatch Events**.
+  - **Maintenance Window**.
+
+---
+
+## 8. Change Manager
+
+Dùng để **quản lý & kiểm soát change** theo quy trình, có **approval**, log, audit.
+
+### Ý nghĩa
+
+- Chuẩn hóa **quy trình change**:
+  - Deploy, patch prod, đổi cấu hình quan trọng…
+- Đảm bảo:
+  - Có người/nhóm approve trước khi chạy.
+  - Tách vai trò: người tạo ≠ người approve ≠ runbook.
+- Audit đầy đủ: ai đề xuất, ai approve, chạy runbook nào, kết quả ra sao.
+
+### Khái niệm chính
+
+- **Change Template**:
+  - Định nghĩa loại change:
+    - Form thông tin cần điền.
+    - Workflow approval (user/role/group).
+    - Runbook Automation sẽ chạy.
+- **Change Request**:
+  - Người dùng tạo request từ template:
+    - Điền thông tin change + parameter cho runbook.
+  - Gửi duyệt → được approve → Change Manager gọi Automation theo lịch.
+
+---
+
+## 9. Application Manager
+
+Dùng để **xem và quản lý hệ thống theo “ứng dụng”** thay vì từng resource riêng lẻ.
+
+### Ý nghĩa
+
+- Gom các resource thành **application**:
+  - EC2, ECS, Lambda, RDS, ELB, S3, …
+- Dựa trên:
+  - Tag (thông qua **Resource Groups**).
+  - **CloudFormation Stack**.
+  - **AppRegistry**.
+- Cho phép:
+  - Xem toàn bộ tài nguyên của 1 ứng dụng từ 1 màn hình.
+  - Thao tác SSM (Run Command, Automation, Patch…) dựa trên app đó.
+
+### Cách dùng tóm tắt
+
+1. Chuẩn hóa **tag/stack** cho application (VD: `Application=PaymentService`).
+2. Tạo **Resource Group/Application** dựa trên tag/stack.
+3. Vào **Application Manager**, chọn app để xem resource và thao tác.
+
+---
+
+## 10. Parameter Store
+
+Dùng để **lưu trữ cấu hình & secret tập trung**, truy cập được từ EC2, ECS, Lambda, script, SSM Document,…
+
+### Loại parameter
+
+- `String`      – plain text.
+- `StringList`  – list string, phân tách bằng dấu phẩy.
+- `SecureString` – **mã hóa bằng KMS**, dùng cho secret (password, API key,…).
+
+### Ý nghĩa
+
+- Tách config/secret khỏi code.
+- Dễ quản lý theo path:
+  - `/app/dev/...`
+  - `/app/prod/...`
+- Kết hợp IAM + KMS để hạn chế ai/ứng dụng nào được đọc.
+
+### Encryption (SecureString)
+
+- Khi tạo parameter:
+  - Chọn type **SecureString**.
+  - Chọn KMS key:
+    - AWS managed.
+    - Hoặc customer managed key.
+- Khi đọc:
+  - Gọi API/CLI với `WithDecryption=true`.
+  - Ứng dụng (hoặc SSM document) phải có quyền KMS + SSM phù hợp.
+
+---
+
+## 11. Gợi ý sử dụng tổng thể
+
+- **Run Command**: thao tác ad‑hoc, vận hành hàng loạt.
+- **Patch Manager + Maintenance Window**: patch OS tự động, theo lịch.
+- **State Manager**: đảm bảo “trạng thái chuẩn” (service, package, config).
+- **Automation Runbook**: quy trình phức tạp nhiều bước, có logic & tích hợp dịch vụ AWS.
+- **Change Manager**: thêm lớp **quy trình & approval** cho Automation, đặc biệt môi trường Prod.
+- **Parameter Store**: quản lý config/secret tập trung, an toàn.
+- **Hybrid Activation**: quản lý server on‑prem/cloud khác bằng cùng công cụ.
+- **Application Manager**: vận hành theo khái niệm “ứng dụng” thay vì tài nguyên rời rạc.
+
+---
