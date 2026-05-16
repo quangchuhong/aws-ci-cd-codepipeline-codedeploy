@@ -321,3 +321,83 @@ Dùng để **lưu trữ cấu hình & secret tập trung**, truy cập được
 - **Application Manager**: vận hành theo khái niệm “ứng dụng” thay vì tài nguyên rời rạc.
 
 ---
+
+## 12. Cấu trúc & ý nghĩa các thành phần trong Automation Runbook (tóm tắt)
+
+Phần này tóm tắt cấu trúc của **Automation document** (runbook) và ý nghĩa các thành phần chính.
+
+### 12.1 Cấu trúc cơ bản
+
+Một Automation document (YAML) thường gồm:
+
+- `schemaVersion`
+- `description`
+- `assumeRole`
+- `parameters`
+- `mainSteps`
+- `outputs`
+
+### 12.2 `schemaVersion` & `description`
+
+- `schemaVersion: '0.3'`
+  - Version schema cho Automation (chọn `'0.3'` cho runbook mới).
+- `description`
+  - Mô tả mục đích runbook (hiển thị trong console, Change Manager).
+
+### 12.3 `assumeRole`
+
+- IAM Role mà Automation **assume** để gọi API AWS.
+- Role phải:
+  - Trust `ssm.amazonaws.com`.
+  - Có policy phù hợp (StopInstances, CreateImage, SNS:Publish,…).
+- Giúp tách **quyền runbook** khỏi quyền người chạy.
+
+### 12.4 `parameters`
+
+- Khai báo input cho runbook (vd: `InstanceId`, `InstanceIds`, `RetentionDays`, …).
+- Thuộc tính chính:
+  - `type` – `String`, `StringList`, `Integer`, `Boolean`, …
+  - `default` – giá trị mặc định.
+  - `description` – mô tả.
+  - `allowedValues` / `allowedPattern` – validate.
+- Dùng trong step bằng cú pháp: `{{ ParameterName }}`.
+
+### 12.5 `mainSteps`
+
+Tập hợp các **bước xử lý** theo thứ tự:
+
+Mỗi step có:
+
+- `name` – tên duy nhất (để tham chiếu & lấy output).
+- `action` – loại hành động:
+  - `aws:executeAwsApi` – gọi API AWS (EC2, S3, RDS, IAM,…).
+  - `aws:runCommand` – chạy Command document trên instance.
+  - `aws:executeScript` – chạy logic Python/PowerShell inline.
+  - `aws:approve` / `aws:reject` / `aws:pause` – approval / dừng chờ.
+- `inputs` – tham số cho `action` (Service, Api, InstanceIds, DocumentName, Parameters,…).
+- Control flow (tùy chọn):
+  - `nextStep` – step tiếp theo nếu thành công.
+  - `isEnd: true` – đánh dấu kết thúc runbook.
+  - `onFailure` – hành vi khi lỗi:
+    - `Abort` / `Continue` / `step:<TênStepKhác>`.
+  - `timeoutSeconds` – timeout cho step.
+
+→ `mainSteps` cho phép bạn **xâu chuỗi nhiều hành động** (dừng EC2, snapshot, start lại, gửi SNS,…) trong một runbook có luồng xử lý & lỗi rõ ràng.
+
+### 12.6 `outputs`
+
+- Định nghĩa **output cuối cùng** của runbook:
+  - `Name` – tên biến output.
+  - `Selector` – JSONPath tới output của một step (vd: `$.StepName.Field`).
+  - `Type` – `String`, `StringList`, `Map`, …
+- Output dùng để:
+  - Xem kết quả trong console.
+  - Cho Change Manager / hệ thống khác đọc lại kết quả qua API.
+
+### 12.7 Liên kết với thành phần khác
+
+- **Change Manager**: sử dụng runbook làm “engine” thực thi change sau khi approve.
+- **EventBridge / CloudWatch**: trigger runbook theo sự kiện (alarm, EC2 state change,…).
+- **Maintenance Window**: chạy runbook theo lịch (backup, patch, cleanup,…).
+
+---
